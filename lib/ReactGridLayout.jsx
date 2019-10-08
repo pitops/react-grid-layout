@@ -14,7 +14,8 @@ import {
   synchronizeLayoutWithChildren,
   validateLayout,
   getAllCollisions,
-  noop
+  noop,
+  pick
 } from "./utils";
 import GridItem from "./GridItem";
 import type {
@@ -105,6 +106,33 @@ try {
 } catch (e) {
   /* Ignore */
 }
+
+/**
+ * Array of keys for sCU
+ */
+const pickPropsKeys = [
+  "className",
+  "style",
+  "width",
+  "autoSize",
+  "cols",
+  "draggableCancel",
+  "draggableHandle",
+  "verticalCompact",
+  "compactType",
+  "layout",
+  "margin",
+  "containerPadding",
+  "rowHeight",
+  "maxRows",
+  "isDraggable",
+  "isResizable",
+  "isDroppable",
+  "preventCollision",
+  "useCSSTransforms",
+  "transformScale",
+  "droppingItem"
+];
 
 /**
  * A reactive, fluid grid layout with draggable, resizable components.
@@ -358,6 +386,15 @@ export default class ReactGridLayout extends React.Component<Props, State> {
     }
 
     return null;
+  }
+
+  shouldComponentUpdate(nextProps: Props, nextState: State) {
+    return (
+      !isEqual(
+        pick(pickPropsKeys, this.props),
+        pick(pickPropsKeys, nextProps)
+      ) || !isEqual(this.state.activeDrag, nextState.activeDrag)
+    );
   }
 
   componentDidUpdate(prevProps: Props, prevState: State) {
