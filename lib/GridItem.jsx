@@ -4,9 +4,15 @@ import ReactDOM from "react-dom";
 import PropTypes from "prop-types";
 import { DraggableCore } from "react-draggable";
 import { Resizable } from "react-resizable";
-import { perc, setTopLeft, setTransform } from "./utils";
+import {
+  calcGridItemPosition,
+  calcGridColWidth,
+  fastPositionEqual,
+  perc,
+  setTopLeft,
+  setTransform
+} from "./utils";
 import classNames from "classnames";
-import isEqual from "lodash.isequal";
 import type { Element as ReactElement, Node as ReactNode } from "react";
 
 import type {
@@ -177,23 +183,13 @@ export default class GridItem extends React.Component<Props, State> {
   currentNode: HTMLElement;
 
   shouldComponentUpdate(nextProps: Props, nextState: State) {
-    const oldPosition = this.calcPosition(
-      this.props.x,
-      this.props.y,
-      this.props.w,
-      this.props.h,
-      this.state
-    );
-    const newPosition = this.calcPosition(
-      nextProps.x,
-      nextProps.y,
-      nextProps.w,
-      nextProps.h,
-      nextState
-    );
+    let { x, y, w, h } = this.props;
+    const oldPosition = this.calcPosition(x, y, w, h, this.state, this.props);
+    ({ x, y, w, h } = nextProps);
+    const newPosition = this.calcPosition(x, y, w, h, nextState, nextProps);
     return (
-      !isEqual(oldPosition, newPosition) ||
-      !isEqual(this.props.useCSSTransforms, nextProps.useCSSTransforms)
+      !fastPositionEqual(oldPosition, newPosition) ||
+      this.props.useCSSTransforms !== nextProps.useCSSTransforms
     );
   }
 
@@ -238,66 +234,28 @@ export default class GridItem extends React.Component<Props, State> {
     }
   }
 
-  // Helper for generating column width
-  calcColWidth(): number {
-    const { margin, containerPadding, containerWidth, cols } = this.props;
-    return (
-      (containerWidth - margin[0] * (cols - 1) - containerPadding[0] * 2) / cols
-    );
-  }
-
-  /**
-   * Return position on the page given an x, y, w, h.
-   * left, top, width, height are all in pixels.
-   * @param  {Number}  x             X coordinate in grid units.
-   * @param  {Number}  y             Y coordinate in grid units.
-   * @param  {Number}  w             W coordinate in grid units.
-   * @param  {Number}  h             H coordinate in grid units.
-   * @return {Object}                Object containing coords.
-   */
+  // Helper fn to make calcGridPosition easier to call.
   calcPosition(
     x: number,
     y: number,
     w: number,
     h: number,
-    state: ?Object
-  ): Position {
-    const { margin, containerPadding, rowHeight } = this.props;
-    const colWidth = this.calcColWidth();
-    const out = {};
-
-    // If resizing, use the exact width and height as returned from resizing callbacks.
-    if (state && state.resizing) {
-      out.width = Math.round(state.resizing.width);
-      out.height = Math.round(state.resizing.height);
-    }
-    // Otherwise, calculate from grid units.
-    else {
-      // 0 * Infinity === NaN, which causes problems with resize constraints;
-      // Fix this if it occurs.
-      // Note we do it here rather than later because Math.round(Infinity) causes deopt
-      out.width =
-        w === Infinity
-          ? w
-          : Math.round(colWidth * w + Math.max(0, w - 1) * margin[0]);
-      out.height =
-        h === Infinity
-          ? h
-          : Math.round(rowHeight * h + Math.max(0, h - 1) * margin[1]);
-    }
-
-    // If dragging, use the exact width and height as returned from dragging callbacks.
-    if (state && state.dragging) {
-      out.top = Math.round(state.dragging.top);
-      out.left = Math.round(state.dragging.left);
-    }
-    // Otherwise, calculate from grid units.
-    else {
-      out.top = Math.round((rowHeight + margin[1]) * y + containerPadding[1]);
-      out.left = Math.round((colWidth + margin[0]) * x + containerPadding[0]);
-    }
-
-    return out;
+    state: State,
+    props: Props
+  ) {
+    return calcGridItemPosition(
+      x,
+      y,
+      w,
+      h,
+      state.resizing,
+      state.dragging,
+      props.margin,
+      props.containerPadding,
+      props.rowHeight,
+      props.containerWidth,
+      props.cols
+    );
   }
 
   /**
@@ -307,8 +265,22 @@ export default class GridItem extends React.Component<Props, State> {
    * @return {Object} x and y in grid units.
    */
   calcXY(top: number, left: number): { x: number, y: number } {
-    const { margin, cols, rowHeight, w, h, maxRows } = this.props;
-    const colWidth = this.calcColWidth();
+    const {
+      margin,
+      cols,
+      containerPadding,
+      containerWidth,
+      rowHeight,
+      w,
+      h,
+      maxRows
+    } = this.props;
+    const colWidth = calcGridColWidth(
+      margin,
+      containerPadding,
+      containerWidth,
+      cols
+    );
 
     // left = colWidth * x + margin * (x + 1)
     // l = cx + m(x+1)
@@ -340,8 +312,22 @@ export default class GridItem extends React.Component<Props, State> {
     height: number,
     width: number
   }): { w: number, h: number } {
-    const { margin, maxRows, cols, rowHeight, x, y } = this.props;
-    const colWidth = this.calcColWidth();
+    const {
+      margin,
+      cols,
+      containerPadding,
+      containerWidth,
+      rowHeight,
+      x,
+      y,
+      maxRows
+    } = this.props;
+    const colWidth = calcGridColWidth(
+      margin,
+      containerPadding,
+      containerWidth,
+      cols
+    );
 
     // width = colWidth * w - (margin * (w - 1))
     // ...
@@ -422,11 +408,18 @@ export default class GridItem extends React.Component<Props, State> {
     const { cols, x, minW, minH, maxW, maxH, transformScale } = this.props;
 
     // This is the max possible width - doesn't go to infinity because of the width of the window
-    const maxWidth = this.calcPosition(0, 0, cols - x, 0).width;
+    const maxWidth = this.calcPosition(
+      0,
+      0,
+      cols - x,
+      0,
+      this.state,
+      this.props
+    ).width;
 
     // Calculate min/max constraints using our min & maxes
-    const mins = this.calcPosition(0, 0, minW, minH);
-    const maxes = this.calcPosition(0, 0, maxW, maxH);
+    const mins = this.calcPosition(0, 0, minW, minH, this.state, this.props);
+    const maxes = this.calcPosition(0, 0, maxW, maxH, this.state, this.props);
     const minConstraints = [mins.width, mins.height];
     const maxConstraints = [
       Math.min(maxes.width, maxWidth),
@@ -623,7 +616,7 @@ export default class GridItem extends React.Component<Props, State> {
       useCSSTransforms
     } = this.props;
 
-    const pos = this.calcPosition(x, y, w, h, this.state);
+    const pos = this.calcPosition(x, y, w, h, this.state, this.props);
     const child = React.Children.only(this.props.children);
 
     // Create the child element. We clone the existing element but modify its className and style.
